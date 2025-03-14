@@ -87,3 +87,9 @@ def get_world_size():  # this is for distributed stuff, might come in handy one 
         return 1
     return dist.get_world_size()
 
+
+class DictToObject:  # handy for holding lots of hyperparameters
+    def __init__(self, dictionary):
+        for key, value in dictionary.items():
+            setattr(self, key, value)
+

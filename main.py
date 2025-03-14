@@ -14,7 +14,7 @@ from timm.optim import create_optimizer
 from timm.scheduler import create_scheduler
 from timm.data import Mixup
 
-from helpers.utils import running_average, get_world_size
+from helpers.utils import running_average, get_world_size, DictToObject
 
 # Define device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -101,7 +101,7 @@ def train(model, train_loader, test_loader, optimizer, criterion, epochs, loss_s
         print(f"Epoch {epoch+1}")
 
         train_stats = train_epoch(
-            model, criterion, train_loader, optimizer, loss_scaler, args['clip_grad'], args['clip_mode'], mixup_fn
+            model, criterion, train_loader, optimizer, loss_scaler, args.clip_grad, args.clip_mode, mixup_fn
         )
         eval_stats = evaluate(model, test_loader)
 
@@ -125,14 +125,15 @@ def main(lr, batch_size, epochs, args, mixup=0.8, smoothing=0.1):
         mode=args['wandb_mode'],
         group='001-basic'
     )
+    args = DictToObject(args)
 
     mixup_fn = None
-    mixup_active = mixup > 0 or args['cutmix'] > 0.0 or args['cutmix_minmax'] is not None
+    mixup_active = mixup > 0 or args.cutmix > 0.0 or args.cutmix_minmax is not None
     if mixup_active:
         mixup_fn = Mixup(
-            mixup_alpha=mixup, cutmix_alpha=args['cutmix'], cutmix_minmax=args['cutmix_minmax'],
-            prob=args['mixup_prob'], switch_prob=args['mixup_switch_prob'], mode=args['mixup_mode'],
-            label_smoothing=args['smoothing'], num_classes=args['num_classes']
+            mixup_alpha=mixup, cutmix_alpha=args.cutmix, cutmix_minmax=args.cutmix_minmax,
+            prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
+            label_smoothing=args.smoothing, num_classes=args.num_classes
         )
 
     #
