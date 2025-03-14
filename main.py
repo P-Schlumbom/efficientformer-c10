@@ -14,7 +14,7 @@ from timm.optim import create_optimizer
 from timm.scheduler import create_scheduler
 from timm.data import Mixup
 
-from helpers.utils import running_average
+from helpers.utils import running_average, get_world_size
 
 # Define device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -119,6 +119,12 @@ def train(model, train_loader, test_loader, optimizer, criterion, epochs, loss_s
 
 
 def main(lr, batch_size, epochs, args, mixup=0.8, smoothing=0.1):
+    wandb.init(
+        project="efficientformer_experiments",
+        config=args,
+        mode=args['wandb_mode'],
+        group='001-basic'
+    )
 
     mixup_fn = None
     mixup_active = mixup > 0 or args['cutmix'] > 0.0 or args['cutmix_minmax'] is not None
@@ -143,7 +149,7 @@ def main(lr, batch_size, epochs, args, mixup=0.8, smoothing=0.1):
                        for p in model.parameters() if p.requires_grad)
     print('number of params:', n_parameters)
 
-    linear_scaled_lr = lr * batch_size * utils.get_world_size() / 1024.
+    linear_scaled_lr = lr * batch_size * get_world_size() / 1024.
     lr = linear_scaled_lr
 
     optimizer = create_optimizer(args, model)  # the demo uses model_without_ddp, but I believe this is only relevant for parallel training
@@ -172,11 +178,20 @@ def main(lr, batch_size, epochs, args, mixup=0.8, smoothing=0.1):
 
     train(model, train_loader, test_loader, optimizer, criterion, epochs, loss_scaler, lr_scheduler, mixup_fn, args)
 
+    wandb.finish()
+
 
 if __name__ == "__main__":
+    mode='disabled'
+    epochs = 1
+    batch_size = 64
     lr = 1e-3
     args = {
-        'num_classes': 10,  # general params
+        'epochs': epochs,  # general params
+        'batch_size': batch_size,
+        'num_classes': 10,
+        'smoothing': 0.1,
+        'wandb_mode': mode,
         'opt': 'adamw',  # optimizer params
         'opt_eps': 1e-8,
         'opt_betas': None,
@@ -205,9 +220,10 @@ if __name__ == "__main__":
     }
     main(
         lr=lr,
-        batch_size=64,
-        epochs=10,
+        batch_size=batch_size,
+        epochs=epochs,
         args=args,
-        mixup=args['mixup']
+        mixup=args['mixup'],
+        smoothing=args['smoothing']
     )
 

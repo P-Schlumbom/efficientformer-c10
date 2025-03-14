@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import torch.distributed as dist
 import random
 
 
@@ -71,4 +72,18 @@ def set_seed(seed: int) -> None:
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
+
+
+def is_dist_avail_and_initialized():
+    if not dist.is_available():
+        return False
+    if not dist.is_initialized():
+        return False
+    return True
+
+
+def get_world_size():  # this is for distributed stuff, might come in handy one day
+    if not is_dist_avail_and_initialized():
+        return 1
+    return dist.get_world_size()
 
