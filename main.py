@@ -15,6 +15,7 @@ from timm.scheduler import create_scheduler
 from timm.data import Mixup
 
 from helpers.utils import running_average, get_world_size, DictToObject
+from dataset_loaders.dataset_loaders import prepare_cifar10, prepare_local_dataset
 
 # Define device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -22,21 +23,9 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.manual_seed(42)
 
 
-def prepare_data():
-    # Define data transformations
-    transform = transforms.Compose([
-        transforms.RandomHorizontalFlip(),
-        transforms.RandomCrop(32, padding=4),
-        transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261))
-    ])
-
-    # Load CIFAR-10 dataset
-    train_dataset = datasets.CIFAR10(root="./data", train=True, transform=transform, download=True)
-    test_dataset = datasets.CIFAR10(root="./data", train=False, transform=transform, download=True)
-
-    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True, num_workers=0)
-    test_loader = DataLoader(test_dataset, batch_size=128, shuffle=True, num_workers=0)
+def prepare_data(src_path, batch_size, num_classes=None, train_prop=0.8):
+    #train_loader, test_loader = prepare_cifar10(batch_size)
+    train_loader, test_loader = prepare_local_dataset(src_path, batch_size, num_classes=num_classes, train_prop=train_prop)
 
     return train_loader, test_loader
 
@@ -171,7 +160,7 @@ def main(lr, batch_size, epochs, args, mixup=0.8, smoothing=0.1):
     # data preparation
     #
 
-    train_loader, test_loader = prepare_data()
+    train_loader, test_loader = prepare_data('../../../Datasets/stink-bugs/data_224', args.batch_size)
 
     #
     # training
