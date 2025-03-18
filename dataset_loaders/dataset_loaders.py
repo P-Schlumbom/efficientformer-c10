@@ -2,8 +2,22 @@ import torch
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 from torch.utils.data import DataLoader
+from PIL import Image
 
-from local_dataset import LocalDataset
+from dataset_loaders.local_dataset import LocalDataset
+
+
+class ConditionalResize:
+    def __init__(self, min_size=128):
+        self.min_size = min_size
+
+    def __call__(self, image):
+        width, height = image.size
+        if min(width, height) < self.min_size:
+            scale_factor = self.min_size / min(width, height)
+            new_size = (int(width * scale_factor), int(height * scale_factor))
+            return image.resize(new_size, Image.BILINEAR)
+        return image
 
 
 def prepare_cifar10(batch_size=128, transform=None):
@@ -29,7 +43,8 @@ def prepare_local_dataset(src_path, batch_size=128, num_classes=None, train_prop
     if transform is None:
         transform = transforms.Compose([
             transforms.RandomHorizontalFlip(),
-            transforms.RandomCrop(128, padding=4),
+            ConditionalResize(min_size=128),
+            #transforms.RandomCrop(128, padding=4),
             transforms.ToTensor(),
             transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261))
         ])
