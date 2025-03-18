@@ -50,7 +50,7 @@ def train_epoch(model, criterion, train_loader, optimizer, loss_scaler, clip_gra
         targets = targets.to(device)
 
         if mixup_fn is not None:
-            samples, targets = mixup_fn
+            samples, targets = mixup_fn(samples, targets)
 
         outputs = model(samples)
         loss = criterion(samples, outputs, targets)
