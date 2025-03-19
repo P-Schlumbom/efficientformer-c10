@@ -25,7 +25,7 @@ torch.manual_seed(42)
 
 def prepare_data(src_path, batch_size, num_classes=None, train_prop=0.8):
     #train_loader, test_loader = prepare_cifar10(batch_size)
-    train_loader, test_loader = prepare_local_dataset(src_path, batch_size, num_classes=num_classes, train_prop=train_prop)
+    train_loader, test_loader = prepare_local_dataset(src_path, batch_size, num_classes=num_classes, train_prop=train_prop, drop_last=True)
 
     return train_loader, test_loader
 
@@ -41,8 +41,9 @@ def train_epoch(model, criterion, train_loader, optimizer, loss_scaler, clip_gra
         if mixup_fn is not None:
             samples, targets = mixup_fn(samples, targets)
 
+        #print(samples.shape)
         outputs = model(samples)
-        loss = criterion(samples, outputs, targets)
+        loss = criterion(outputs, targets)  # note original code had distillation loss which we aren't using
 
         loss_value = loss.item()
 
@@ -57,9 +58,10 @@ def train_epoch(model, criterion, train_loader, optimizer, loss_scaler, clip_gra
             optimizer, 'is_second_order') and optimizer.is_second_order
         loss_scaler(loss, optimizer, clip_grad=clip_grad, clip_mode=clip_mode,
                     parameters=model.parameters(), create_graph=is_second_order)
+        targets = targets.argmax(dim=1)  # Convert from one-hot to class indices
         acc = accuracy(outputs, targets)
         mean_loss = running_average(loss_value, mean_loss, i)
-        mean_acc = running_average(acc, mean_acc, i)
+        mean_acc = running_average(acc[0], mean_acc, i)
     return {'loss': mean_loss, 'accuracy': mean_acc}
 
 
@@ -80,7 +82,7 @@ def evaluate(model, test_loader):
             acc = accuracy(output, targets)
 
             mean_loss = running_average(loss, mean_loss, i)
-            mean_acc = running_average(acc, mean_acc, i)
+            mean_acc = running_average(acc[0], mean_acc, i)
     return {'loss': mean_loss, 'accuracy': mean_acc}
 
 
@@ -161,6 +163,7 @@ def main(lr, batch_size, epochs, args, mixup=0.8, smoothing=0.1):
     #
 
     train_loader, test_loader = prepare_data('../../../Datasets/stink-bugs/data_224', args.batch_size)
+    #train_loader, test_loader = prepare_data('data/demo_data', args.batch_size)
 
     #
     # training
@@ -174,7 +177,7 @@ def main(lr, batch_size, epochs, args, mixup=0.8, smoothing=0.1):
 if __name__ == "__main__":
     mode='disabled'
     epochs = 1
-    batch_size = 64
+    batch_size = 16
     lr = 1e-3
     args = {
         'epochs': epochs,  # general params

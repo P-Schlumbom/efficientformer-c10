@@ -1,5 +1,5 @@
 from os import listdir
-from os.path import sep, join, exists
+from os.path import sep, join, exists, splitext
 import json
 
 from PIL import Image
@@ -10,8 +10,11 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 
 
+VALID_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff'}
+
+
 class LocalDataset(Dataset):
-    def __init__(self, data_src: str, num_classes=None, train=True, train_prop=0.8, transform=None, cache_file='image_paths_cache.json'):
+    def __init__(self, data_src: str, num_classes=None, train=True, train_prop=0.8, transform=None, cache_file='image_paths_cache.json', recreate_cache=False):
         super().__init__()
 
         self.data_src = data_src
@@ -26,13 +29,16 @@ class LocalDataset(Dataset):
         self.id2name = {i: name for i, name in enumerate(self.class_names)}
         self.name2id = {name: i for i, name in enumerate(self.class_names)}
 
-        if exists(self.cache_file):
+        if exists(self.cache_file) and not recreate_cache:
             with open(self.cache_file, 'r') as f:
                 self.im_paths = {int(k): v for k, v in json.load(f).items()}
         else:
             self.im_paths = {
-                self.name2id[name]: [join(data_src, name, im_name) for im_name in
-                                     listdir(join(data_src, name))]
+                self.name2id[name]: [
+                    join(data_src, name, im_name)
+                    for im_name in listdir(join(data_src, name))
+                    if splitext(im_name.lower())[-1] in VALID_IMAGE_EXTENSIONS
+                ]
                 for name in self.class_names
             }
             with open(self.cache_file, 'w') as f:
