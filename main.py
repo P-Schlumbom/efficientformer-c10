@@ -2,6 +2,8 @@ import sys
 import math
 import wandb
 from tqdm import tqdm
+from os.path import join
+from pathlib import Path
 
 import torch
 import torchvision.transforms as transforms
@@ -107,6 +109,16 @@ def train(model, train_loader, test_loader, optimizer, criterion, epochs, loss_s
         print(f"Results:\n"
               f"Train Loss: {log_stats['train']['loss']:.4f}, Train Accuracy: {log_stats['train']['accuracy']}\n"
               f"Test Loss:  {log_stats['test']['loss']:.4f}, Test Accuracy:  {log_stats['test']['accuracy']}\n---")
+        if args.save_checkpoints:
+            model_dict = {
+                'state_dict': model.state_dict(),
+                'args': vars(args)
+            }
+            Path('checkpoints').mkdir(parents=True, exist_ok=True)
+            if args.checkpoint_name is not None:
+                torch.save(model_dict, join('checkpoints', f"{args.checkpoint_name}.pth"))
+            else:
+                torch.save(model_dict, join('checkpoints', f"{wandb.run.name}.pth"))
 
 
 def main(lr, batch_size, epochs, args, mixup=0.8, smoothing=0.1):
@@ -186,8 +198,8 @@ def main(lr, batch_size, epochs, args, mixup=0.8, smoothing=0.1):
 
 if __name__ == "__main__":
     mode='disabled'
-    epochs = 1
-    batch_size = 96
+    epochs = 100
+    batch_size = 384
     lr = 1e-3
     args = {
         'epochs': epochs,  # general params
@@ -195,6 +207,8 @@ if __name__ == "__main__":
         'num_classes': None,
         'smoothing': 0.1,
         'wandb_mode': mode,
+        'save_checkpoints': True,
+        'checkpoint_name': 'test',
         'opt': 'adamw',  # optimizer params
         'opt_eps': 1e-8,
         'opt_betas': None,
