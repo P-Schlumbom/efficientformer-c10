@@ -55,5 +55,5 @@ def prepare_local_dataset(src_path, batch_size=128, num_classes=None, train_prop
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=drop_last)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=drop_last)
 
-    return train_loader, test_loader
+    return train_loader, test_loader, train_dataset, test_dataset
 

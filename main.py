@@ -25,9 +25,9 @@ torch.manual_seed(42)
 
 def prepare_data(src_path, batch_size, num_classes=None, train_prop=0.8):
     #train_loader, test_loader = prepare_cifar10(batch_size)
-    train_loader, test_loader = prepare_local_dataset(src_path, batch_size, num_classes=num_classes, train_prop=train_prop, drop_last=True)
+    train_loader, test_loader, train_dataset, test_dataset = prepare_local_dataset(src_path, batch_size, num_classes=num_classes, train_prop=train_prop, drop_last=True)
 
-    return train_loader, test_loader
+    return train_loader, test_loader, train_dataset, test_dataset
 
 
 def train_epoch(model, criterion, train_loader, optimizer, loss_scaler, clip_grad, clip_mode, mixup_fn):
@@ -110,11 +110,27 @@ def train(model, train_loader, test_loader, optimizer, criterion, epochs, loss_s
 
 
 def main(lr, batch_size, epochs, args, mixup=0.8, smoothing=0.1):
+
+    #
+    # data preparation
+    #
+
+    print("preparing data...")
+    #train_loader, test_loader, train_dataset, test_dataset = prepare_data('../../../Datasets/stink-bugs/data_224', args.batch_size)
+    train_loader, test_loader, train_dataset, test_dataset = prepare_data('../../../../hw168/2023B/NZ-Species-Training/dataset/train', args['batch_size'])
+    #train_loader, test_loader, train_dataset, test_dataset = prepare_data('data/demo_data', args['batch_size'])
+
+    if args['num_classes'] is None:
+        args['num_classes'] = train_dataset.num_classes  # set number of classes if not specified
+
+    print(f"done! {args['num_classes']} classes.")
+
+
     wandb.init(
         project="efficientformer_experiments",
         config=args,
         mode=args['wandb_mode'],
-        group='001-basic'
+        group='002-species'
     )
     args = DictToObject(args)
 
@@ -133,12 +149,13 @@ def main(lr, batch_size, epochs, args, mixup=0.8, smoothing=0.1):
 
     model =create_model(
         'efficientformerv2_s1',
-        num_classes=10,
+        num_classes=args.num_classes,
         pretrained=True
     )  # perhaps it really is that simple
     model.to(device)
     n_parameters = sum(p.numel()
                        for p in model.parameters() if p.requires_grad)
+    print(model.default_cfg)
     print('number of params:', n_parameters)
 
     linear_scaled_lr = lr * batch_size * get_world_size() / 1024.
@@ -159,13 +176,6 @@ def main(lr, batch_size, epochs, args, mixup=0.8, smoothing=0.1):
         criterion = torch.nn.CrossEntropyLoss()
 
     #
-    # data preparation
-    #
-
-    train_loader, test_loader = prepare_data('../../../Datasets/stink-bugs/data_224', args.batch_size)
-    #train_loader, test_loader = prepare_data('data/demo_data', args.batch_size)
-
-    #
     # training
     #
 
@@ -177,12 +187,12 @@ def main(lr, batch_size, epochs, args, mixup=0.8, smoothing=0.1):
 if __name__ == "__main__":
     mode='disabled'
     epochs = 1
-    batch_size = 16
+    batch_size = 96
     lr = 1e-3
     args = {
         'epochs': epochs,  # general params
         'batch_size': batch_size,
-        'num_classes': 10,
+        'num_classes': None,
         'smoothing': 0.1,
         'wandb_mode': mode,
         'opt': 'adamw',  # optimizer params

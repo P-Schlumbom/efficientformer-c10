@@ -1,6 +1,7 @@
 from os import listdir
-from os.path import sep, join, exists, splitext
+from os.path import sep, join, exists, splitext, split, abspath
 import json
+import hashlib
 
 from PIL import Image
 import numpy as np
@@ -13,14 +14,28 @@ from torch.utils.data import Dataset, DataLoader
 VALID_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff'}
 
 
+def get_cache_name(path):
+    # Normalize the path (handle different OS formats)
+    dataset_name = split(path)[-1]
+    norm_path = abspath(path)
+    # Create a hash
+    path_hash = hashlib.sha256(norm_path.encode()).hexdigest()[:16]  # Shorten hash if needed
+    return f"{dataset_name}_cache_{path_hash}.json"
+
+
 class LocalDataset(Dataset):
-    def __init__(self, data_src: str, num_classes=None, train=True, train_prop=0.8, transform=None, cache_file='image_paths_cache.json', recreate_cache=False):
+    def __init__(self, data_src: str, num_classes=None, train=True, train_prop=0.8, transform=None, cache_loc=None, recreate_cache=False):
         super().__init__()
 
         self.data_src = data_src
+        self.dataset_name = split(data_src)[-1]
+        self.cache_name = get_cache_name(data_src)
         self.class_names = sorted(listdir(data_src))
         self.transform = transform
-        self.cache_file = join(data_src, cache_file)
+        if cache_loc is None:
+            self.cache_file = join('data', self.cache_name)
+        else:
+            self.cache_file = join(cache_loc, self.cache_name)
 
         self.num_classes = num_classes
         if not num_classes:
