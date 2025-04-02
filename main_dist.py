@@ -5,10 +5,12 @@ from tqdm import tqdm
 from os.path import join
 from pathlib import Path
 
+import numpy as np
 import torch
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, DistributedSampler, SequentialSampler
+from torch.nn.parallel import DistributedDataParallel
 from timm.models import create_model
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 from timm.utils import NativeScaler, accuracy
@@ -16,13 +18,11 @@ from timm.optim import create_optimizer
 from timm.scheduler import create_scheduler
 from timm.data import Mixup
 
-from helpers.utils import running_average, get_world_size, DictToObject
+from helpers.utils import running_average, get_world_size, get_rank, init_distributed_mode, DictToObject
 from dataset_loaders.dataset_loaders import prepare_cifar10, prepare_local_dataset
 
-# Define device
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# Set random seed for reproducibility
-torch.manual_seed(42)
 
 
 def prepare_data(src_path, batch_size, num_classes=None, train_prop=0.8):
@@ -37,8 +37,8 @@ def train_epoch(model, criterion, train_loader, optimizer, loss_scaler, clip_gra
     mean_loss, mean_acc = 0, 0
     for i, data in enumerate(tqdm(train_loader)):
         samples, targets = data
-        samples = samples.to(device)
-        targets = targets.to(device)
+        samples = samples.to(device, non_blocking=True)
+        targets = targets.to(device, non_blocking=True)
 
         if mixup_fn is not None:
             samples, targets = mixup_fn(samples, targets)
@@ -60,6 +60,9 @@ def train_epoch(model, criterion, train_loader, optimizer, loss_scaler, clip_gra
             optimizer, 'is_second_order') and optimizer.is_second_order
         loss_scaler(loss, optimizer, clip_grad=clip_grad, clip_mode=clip_mode,
                     parameters=model.parameters(), create_graph=is_second_order)
+
+        torch.cuda.synchronize()
+
         targets = targets.argmax(dim=1)  # Convert from one-hot to class indices
         acc = accuracy(outputs, targets)
         mean_loss = running_average(loss_value, mean_loss, i)
@@ -75,8 +78,8 @@ def evaluate(model, test_loader):
     with torch.no_grad():
         for i, data in enumerate(test_loader):
             images, targets = data
-            images = images.to(device)
-            targets = targets.to(device)
+            images = images.to(device, non_blocking=True)
+            targets = targets.to(device, non_blocking=True)
 
             output = model(images)
             loss = criterion(output, targets)
@@ -91,6 +94,9 @@ def evaluate(model, test_loader):
 def train(model, train_loader, test_loader, optimizer, criterion, epochs, loss_scaler, lr_scheduler, mixup_fn, args):
 
     for epoch in range(epochs):
+        if args.distributed:
+            train_loader.sampler.set_epoch(epoch)
+
         print(f"Epoch {epoch+1}")
 
         train_stats = train_epoch(
@@ -123,16 +129,23 @@ def train(model, train_loader, test_loader, optimizer, criterion, epochs, loss_s
 
 def main(lr, batch_size, epochs, args, mixup=0.8, smoothing=0.1):
     args = DictToObject(args)
+    init_distributed_mode(args)
+
+    # fix seed
+    seed = args.seed + get_rank()
+    torch.manual_seed(seed)
+    np.random.seed(seed)
 
     #
     # data preparation
     #
 
     print("preparing data...")
-    #train_loader, test_loader, train_dataset, test_dataset = prepare_data('../../../Datasets/stink-bugs/data_224', args.batch_size)
-    #train_loader, test_loader, train_dataset, test_dataset = prepare_data('../../../../hw168/2023B/NZ-Species-Training/dataset/train', args['batch_size'])
-    #train_loader, test_loader, train_dataset, test_dataset = prepare_data('data/demo_data', args['batch_size'])
-    train_loader, test_loader, train_dataset, test_dataset = prepare_data('../../../Datasets/Species_Data/2024_species_train_224', args.batch_size)
+    _, _, train_dataset, test_dataset = prepare_data(
+        '../../../Datasets/Species_Data/2024_species_train_224',
+        args.batch_size,
+        train_prop=args.train_prop
+    )
 
     if args.num_classes is None:
         args.num_classes = train_dataset.num_classes  # set number of classes if not specified
@@ -147,6 +160,32 @@ def main(lr, batch_size, epochs, args, mixup=0.8, smoothing=0.1):
         group='002-species'
     )
 
+    num_tasks = get_world_size()
+    global_rank = get_rank()
+
+    #
+    # prepare dataloaders
+    #
+
+    sampler_train = DistributedSampler(train_dataset, num_replicas=num_tasks, rank=global_rank, shuffle=True)
+    if args.dist_eval:
+        if len(test_dataset) % num_tasks != 0:
+            print('Warning: Enabling distributed evaluation with an eval dataset not divisible by process number. '
+                  'This will slightly alter validation results as extra duplicate entries are added to achieve '
+                  'equal num of samples per-process.')
+            sampler_test = DistributedSampler(test_dataset, num_replicas=num_tasks, rank=global_rank, shuffle=False)
+        else:
+            sampler_test = SequentialSampler(test_dataset)
+
+    train_loader = DataLoader(train_dataset, sampler=sampler_train, batch_size=args.batch_size,
+                              num_workers=args.num_workers, pin_memory=args.pin_mem, drop_last=True)
+    test_loader = DataLoader(test_dataset, sampler=sampler_test, batch_size=args.batch_size,
+                              num_workers=args.num_workers, pin_memory=args.pin_mem, drop_last=True)
+
+    #
+    # prepare mixup
+    #
+
     mixup_fn = None
     mixup_active = mixup > 0 or args.cutmix > 0.0 or args.cutmix_minmax is not None
     if mixup_active:
@@ -160,19 +199,25 @@ def main(lr, batch_size, epochs, args, mixup=0.8, smoothing=0.1):
     # create model
     #
 
+    print("creating model...")
     model =create_model(
         'efficientformerv2_s1',
         num_classes=args.num_classes,
         pretrained=True
     )  # perhaps it really is that simple
     model.to(device)
+
+    if args.distributed:  # note that distributed and args.gpu should be set by init_distributed_mode
+        model = DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=False)
+        model_without_ddp = model.module
+
     n_parameters = sum(p.numel()
                        for p in model.parameters() if p.requires_grad)
-    print(model.default_cfg)
+    print(f"model configs: {model.default_cfg}")
     print('number of params:', n_parameters)
 
     linear_scaled_lr = lr * batch_size * get_world_size() / 1024.
-    lr = linear_scaled_lr
+    args.lr = linear_scaled_lr
 
     optimizer = create_optimizer(args, model)  # the demo uses model_without_ddp, but I believe this is only relevant for parallel training
     loss_scaler = NativeScaler()
@@ -207,9 +252,13 @@ if __name__ == "__main__":
         'batch_size': batch_size,
         'num_classes': None,
         'smoothing': 0.1,
+        'train_prop': 0.9,
         'wandb_mode': mode,
         'save_checkpoints': True,
         'checkpoint_name': 'test',
+        'seed': 0,
+        'num_workers': 1,
+        'pin_mem': True,
         'opt': 'adamw',  # optimizer params
         'opt_eps': 1e-8,
         'opt_betas': None,
@@ -234,7 +283,14 @@ if __name__ == "__main__":
         'cutmix_minmax': None,
         'mixup_prob': 1.0,
         'mixup_switch_prob': 0.5,
-        'mixup_mode': 'batch'
+        'mixup_mode': 'batch',
+        'rank': None,  # distributed training parameters
+        'world_size': None,
+        'gpu': None,
+        'dsitributed': None,
+        'dist_backend': None,
+        'dist_url': None,
+        'dist_eval': True,
     }
     main(
         lr=lr,
