@@ -18,7 +18,7 @@ from timm.optim import create_optimizer
 from timm.scheduler import create_scheduler
 from timm.data import Mixup
 
-from helpers.utils import running_average, get_world_size, get_rank, init_distributed_mode, DictToObject
+from helpers.utils import running_average, get_world_size, get_rank, init_distributed_mode, DictToObject, is_main_process
 from dataset_loaders.dataset_loaders import prepare_cifar10, prepare_local_dataset
 
 
@@ -115,7 +115,7 @@ def train(model, train_loader, test_loader, optimizer, criterion, epochs, loss_s
         print(f"Results:\n"
               f"Train Loss: {log_stats['train']['loss']:.4f}, Train Accuracy: {log_stats['train']['accuracy']}\n"
               f"Test Loss:  {log_stats['test']['loss']:.4f}, Test Accuracy:  {log_stats['test']['accuracy']}\n---")
-        if args.save_checkpoints:
+        if args.save_checkpoints and is_main_process():
             model_dict = {
                 'state_dict': model.state_dict(),
                 'args': vars(args)
