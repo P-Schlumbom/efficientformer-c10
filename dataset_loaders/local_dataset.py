@@ -1,3 +1,4 @@
+import os
 from os import listdir
 from os.path import sep, join, exists, splitext, split, abspath
 import json
@@ -30,7 +31,7 @@ class LocalDataset(Dataset):
         self.data_src = data_src
         self.dataset_name = split(data_src)[-1]
         self.cache_name = get_cache_name(data_src)
-        self.class_names = sorted(listdir(data_src))
+        self.class_names = [dir for dir in next(os.walk(data_src))[1]]  # collects top-level directories only (i.e., ignores files)
         self.transform = transform
         if cache_loc is None:
             self.cache_file = join('data', self.cache_name)

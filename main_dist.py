@@ -9,6 +9,7 @@ import numpy as np
 import torch
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
+import torch.distributed as dist
 from torch.utils.data import DataLoader, DistributedSampler, SequentialSampler
 from torch.nn.parallel import DistributedDataParallel
 from timm.models import create_model
@@ -22,9 +23,6 @@ from helpers.utils import running_average, get_world_size, get_rank, init_distri
 from dataset_loaders.dataset_loaders import prepare_cifar10, prepare_local_dataset
 
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
 def prepare_data(src_path, batch_size, num_classes=None, train_prop=0.8):
     #train_loader, test_loader = prepare_cifar10(batch_size)
     train_loader, test_loader, train_dataset, test_dataset = prepare_local_dataset(src_path, batch_size, num_classes=num_classes, train_prop=train_prop, drop_last=True)
@@ -32,7 +30,7 @@ def prepare_data(src_path, batch_size, num_classes=None, train_prop=0.8):
     return train_loader, test_loader, train_dataset, test_dataset
 
 
-def train_epoch(model, criterion, train_loader, optimizer, loss_scaler, clip_grad, clip_mode, mixup_fn):
+def train_epoch(model, criterion, train_loader, optimizer, loss_scaler, clip_grad, clip_mode, mixup_fn, device):
     model.train()
     mean_loss, mean_acc = 0, 0
     for i, data in enumerate(tqdm(train_loader)):
@@ -67,6 +65,20 @@ def train_epoch(model, criterion, train_loader, optimizer, loss_scaler, clip_gra
         acc = accuracy(outputs, targets)
         mean_loss = running_average(loss_value, mean_loss, i)
         mean_acc = running_average(acc[0], mean_acc, i)
+
+    # Convert metrics to tensors for distributed reduction
+    mean_loss_tensor = torch.tensor(mean_loss, dtype=torch.float32, device=device)
+    mean_acc_tensor = torch.tensor(mean_acc, dtype=torch.float32, device=device)
+
+    # Reduce across all processes (sum)
+    dist.all_reduce(mean_loss_tensor, op=dist.ReduceOp.SUM)
+    dist.all_reduce(mean_acc_tensor, op=dist.ReduceOp.SUM)
+
+    # Divide by world size (number of processes) to get mean
+    world_size = dist.get_world_size()
+    mean_loss_tensor /= world_size
+    mean_acc_tensor /= world_size
+
     return {'loss': mean_loss, 'accuracy': mean_acc}
 
 
@@ -91,7 +103,7 @@ def evaluate(model, test_loader):
     return {'loss': mean_loss, 'accuracy': mean_acc}
 
 
-def train(model, train_loader, test_loader, optimizer, criterion, epochs, loss_scaler, lr_scheduler, mixup_fn, args):
+def train(model, train_loader, test_loader, optimizer, criterion, epochs, loss_scaler, lr_scheduler, mixup_fn, device, args):
 
     for epoch in range(epochs):
         if args.distributed:
@@ -100,7 +112,7 @@ def train(model, train_loader, test_loader, optimizer, criterion, epochs, loss_s
         print(f"Epoch {epoch+1}")
 
         train_stats = train_epoch(
-            model, criterion, train_loader, optimizer, loss_scaler, args.clip_grad, args.clip_mode, mixup_fn
+            model, criterion, train_loader, optimizer, loss_scaler, args.clip_grad, args.clip_mode, mixup_fn, device
         )
         eval_stats = evaluate(model, test_loader)
 
@@ -130,6 +142,7 @@ def train(model, train_loader, test_loader, optimizer, criterion, epochs, loss_s
 def main(lr, batch_size, epochs, args, mixup=0.8, smoothing=0.1):
     args = DictToObject(args)
     init_distributed_mode(args)
+    device = torch.device(args.device)
 
     # fix seed
     seed = args.seed + get_rank()
@@ -142,7 +155,8 @@ def main(lr, batch_size, epochs, args, mixup=0.8, smoothing=0.1):
 
     print("preparing data...")
     _, _, train_dataset, test_dataset = prepare_data(
-        '../../../Datasets/Species_Data/2024_species_train_224',
+        #'../../../Datasets/Species_Data/2024_species_train_224',
+        '../../../Datasets/stink-bugs/data_224',
         args.batch_size,
         train_prop=args.train_prop
     )
@@ -237,14 +251,14 @@ def main(lr, batch_size, epochs, args, mixup=0.8, smoothing=0.1):
     # training
     #
 
-    train(model, train_loader, test_loader, optimizer, criterion, epochs, loss_scaler, lr_scheduler, mixup_fn, args)
+    train(model, train_loader, test_loader, optimizer, criterion, epochs, loss_scaler, lr_scheduler, mixup_fn, device, args)
 
     wandb.finish()
 
 
 if __name__ == "__main__":
     mode='disabled'
-    epochs = 100
+    epochs = 1#100
     batch_size = 384
     lr = 1e-3
     args = {
@@ -259,6 +273,7 @@ if __name__ == "__main__":
         'seed': 0,
         'num_workers': 1,
         'pin_mem': True,
+        'device': 'cuda',
         'opt': 'adamw',  # optimizer params
         'opt_eps': 1e-8,
         'opt_betas': None,

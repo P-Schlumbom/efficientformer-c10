@@ -49,8 +49,8 @@ def prepare_local_dataset(src_path, batch_size=128, num_classes=None, train_prop
             transforms.Normalize((0.4914, 0.4822, 0.4465), (0.247, 0.243, 0.261))
         ])
 
-    train_dataset = LocalDataset(src_path, num_classes=num_classes, train=True, train_prop=train_prop, transform=transform)
-    test_dataset = LocalDataset(src_path, num_classes=num_classes, train=False, train_prop=train_prop, transform=transform)
+    train_dataset = LocalDataset(src_path, num_classes=num_classes, train=True, train_prop=train_prop, transform=transform, recreate_cache=False)
+    test_dataset = LocalDataset(src_path, num_classes=num_classes, train=False, train_prop=train_prop, transform=transform, recreate_cache=False)
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=drop_last)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=drop_last)

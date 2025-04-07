@@ -115,6 +115,8 @@ def is_main_process():
 
 
 def init_distributed_mode(args):
+    print(os.environ)
+    print("world size: ", torch.cuda.device_count())
     if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
         args.rank = int(os.environ["RANK"])
         args.world_size = int(os.environ['WORLD_SIZE'])
@@ -135,6 +137,19 @@ def init_distributed_mode(args):
         args.rank, args.dist_url), flush=True)
     torch.distributed.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                          world_size=args.world_size, rank=args.rank)
+    torch.distributed.barrier()
+    setup_for_distributed(args.rank == 0)
+
+
+def setup_distributed(args, rank, world_size):
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '12355'  # can be any free port
+
+    dist.init_process_group(backend='nccl', rank=rank, world_size=world_size)
+    torch.cuda.set_device(rank)
+
+    args.rank=rank
+    args.world_size = world_size
     torch.distributed.barrier()
     setup_for_distributed(args.rank == 0)
 
