@@ -142,6 +142,13 @@ def init_distributed_mode(args):
 
 
 def setup_distributed(args, rank, world_size):
+    """
+    Note I ended up not using this, it might be needed if you don't use torchrun for whatever reason
+    :param args:
+    :param rank:
+    :param world_size:
+    :return:
+    """
     os.environ['MASTER_ADDR'] = 'localhost'
     os.environ['MASTER_PORT'] = '12355'  # can be any free port
 
@@ -150,6 +157,7 @@ def setup_distributed(args, rank, world_size):
 
     args.rank=rank
     args.world_size = world_size
+    args.gpu = rank
     torch.distributed.barrier()
     setup_for_distributed(args.rank == 0)
 

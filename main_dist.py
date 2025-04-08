@@ -19,7 +19,7 @@ from timm.optim import create_optimizer
 from timm.scheduler import create_scheduler
 from timm.data import Mixup
 
-from helpers.utils import running_average, get_world_size, get_rank, init_distributed_mode, DictToObject, is_main_process
+from helpers.utils import running_average, get_world_size, get_rank, init_distributed_mode, setup_distributed, DictToObject, is_main_process
 from dataset_loaders.dataset_loaders import prepare_cifar10, prepare_local_dataset
 
 
@@ -82,7 +82,7 @@ def train_epoch(model, criterion, train_loader, optimizer, loss_scaler, clip_gra
     return {'loss': mean_loss, 'accuracy': mean_acc}
 
 
-def evaluate(model, test_loader):
+def evaluate(model, test_loader, device):
     model.eval()
     mean_loss, mean_acc = 0, 0
     criterion = torch.nn.CrossEntropyLoss()
@@ -100,6 +100,20 @@ def evaluate(model, test_loader):
 
             mean_loss = running_average(loss, mean_loss, i)
             mean_acc = running_average(acc[0], mean_acc, i)
+
+    # Convert metrics to tensors for distributed reduction
+    mean_loss_tensor = torch.tensor(mean_loss, dtype=torch.float32, device=device)
+    mean_acc_tensor = torch.tensor(mean_acc, dtype=torch.float32, device=device)
+
+    # Reduce across all processes (sum)
+    dist.all_reduce(mean_loss_tensor, op=dist.ReduceOp.SUM)
+    dist.all_reduce(mean_acc_tensor, op=dist.ReduceOp.SUM)
+
+    # Divide by world size (number of processes) to get mean
+    world_size = dist.get_world_size()
+    mean_loss_tensor /= world_size
+    mean_acc_tensor /= world_size
+
     return {'loss': mean_loss, 'accuracy': mean_acc}
 
 
@@ -114,29 +128,30 @@ def train(model, train_loader, test_loader, optimizer, criterion, epochs, loss_s
         train_stats = train_epoch(
             model, criterion, train_loader, optimizer, loss_scaler, args.clip_grad, args.clip_mode, mixup_fn, device
         )
-        eval_stats = evaluate(model, test_loader)
+        eval_stats = evaluate(model, test_loader, device)
 
         lr_scheduler.step(epoch)
 
-        log_stats = {
-            'epoch': epoch,
-            'train': train_stats,
-            'test': eval_stats
-        }
-        wandb.log(log_stats)
-        print(f"Results:\n"
-              f"Train Loss: {log_stats['train']['loss']:.4f}, Train Accuracy: {log_stats['train']['accuracy']}\n"
-              f"Test Loss:  {log_stats['test']['loss']:.4f}, Test Accuracy:  {log_stats['test']['accuracy']}\n---")
-        if args.save_checkpoints and is_main_process():
-            model_dict = {
-                'state_dict': model.state_dict(),
-                'args': vars(args)
+        if is_main_process():  # only do this stuff in the main process
+            log_stats = {
+                'epoch': epoch,
+                'train': train_stats,
+                'test': eval_stats
             }
-            Path('checkpoints').mkdir(parents=True, exist_ok=True)
-            if args.checkpoint_name is not None:
-                torch.save(model_dict, join('checkpoints', f"{args.checkpoint_name}.pth"))
-            else:
-                torch.save(model_dict, join('checkpoints', f"{wandb.run.name}.pth"))
+            wandb.log(log_stats)
+            print(f"Results:\n"
+                  f"Train Loss: {log_stats['train']['loss']:.4f}, Train Accuracy: {log_stats['train']['accuracy']}\n"
+                  f"Test Loss:  {log_stats['test']['loss']:.4f}, Test Accuracy:  {log_stats['test']['accuracy']}\n---")
+            if args.save_checkpoints:
+                model_dict = {
+                    'state_dict': model.state_dict(),
+                    'args': vars(args)
+                }
+                Path('checkpoints').mkdir(parents=True, exist_ok=True)
+                if args.checkpoint_name is not None:
+                    torch.save(model_dict, join('checkpoints', f"{args.checkpoint_name}.pth"))
+                else:
+                    torch.save(model_dict, join('checkpoints', f"{wandb.run.name}.pth"))
 
 
 def main(lr, batch_size, epochs, args, mixup=0.8, smoothing=0.1):
@@ -167,12 +182,13 @@ def main(lr, batch_size, epochs, args, mixup=0.8, smoothing=0.1):
     print(f"done! {args.num_classes} classes.")
 
 
-    wandb.init(
-        project="efficientformer_experiments",
-        config=vars(args),
-        mode=args.wandb_mode,
-        group='002-species'
-    )
+    if is_main_process():
+        wandb.init(
+            project="efficientformer_experiments",
+            config=vars(args),
+            mode=args.wandb_mode,
+            group='002-species'
+        )
 
     num_tasks = get_world_size()
     global_rank = get_rank()
@@ -223,11 +239,11 @@ def main(lr, batch_size, epochs, args, mixup=0.8, smoothing=0.1):
 
     if args.distributed:  # note that distributed and args.gpu should be set by init_distributed_mode
         model = DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=False)
-        model_without_ddp = model.module
+        #model_without_ddp = model.module
 
     n_parameters = sum(p.numel()
                        for p in model.parameters() if p.requires_grad)
-    print(f"model configs: {model.default_cfg}")
+    #print(f"model configs: {model.default_cfg}")  # dist doesn't like this >:(
     print('number of params:', n_parameters)
 
     linear_scaled_lr = lr * batch_size * get_world_size() / 1024.
@@ -254,6 +270,7 @@ def main(lr, batch_size, epochs, args, mixup=0.8, smoothing=0.1):
     train(model, train_loader, test_loader, optimizer, criterion, epochs, loss_scaler, lr_scheduler, mixup_fn, device, args)
 
     wandb.finish()
+    torch.distributed.destroy_process_group()
 
 
 if __name__ == "__main__":
