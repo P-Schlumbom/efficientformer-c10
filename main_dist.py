@@ -145,13 +145,17 @@ def train(model, train_loader, test_loader, optimizer, criterion, epochs, loss_s
             if args.save_checkpoints:
                 model_dict = {
                     'state_dict': model.state_dict(),
+                    'optimiser': optimizer.state_dict(),
+                    'lr_scheduler': lr_scheduler.state_dict(),
+                    'epoch': epoch,
+                    'scaler': loss_scaler.state_dict(),
                     'args': vars(args)
                 }
                 Path('checkpoints').mkdir(parents=True, exist_ok=True)
                 if args.checkpoint_name is not None:
-                    torch.save(model_dict, join('checkpoints', f"{args.checkpoint_name}.pth"))
+                    torch.save(model_dict, join('checkpoints', f"{args.checkpoint_name}_{args.start_epoch}-{args.start_epoch + epochs}.pth"))
                 else:
-                    torch.save(model_dict, join('checkpoints', f"{wandb.run.name}.pth"))
+                    torch.save(model_dict, join('checkpoints', f"{wandb.run.name}_{args.start_epoch}-{args.start_epoch + epochs}.pth"))
 
 
 def main(lr, batch_size, epochs, args, mixup=0.8, smoothing=0.1):
@@ -170,8 +174,8 @@ def main(lr, batch_size, epochs, args, mixup=0.8, smoothing=0.1):
 
     print("preparing data...")
     _, _, train_dataset, test_dataset = prepare_data(
-        #'../../../Datasets/Species_Data/2024_species_train_224',
-        '../../../Datasets/stink-bugs/data_224',
+        '../../../Datasets/Species_Data/2024_species_train_224',
+        #'../../../Datasets/stink-bugs/data_224',
         args.batch_size,
         train_prop=args.train_prop
     )
@@ -234,7 +238,13 @@ def main(lr, batch_size, epochs, args, mixup=0.8, smoothing=0.1):
         'efficientformerv2_s1',
         num_classes=args.num_classes,
         pretrained=True
-    )  # perhaps it really is that simple
+    )
+
+    checkpoint = None
+    if args.resume is not None:
+        checkpoint = torch.load(args.resume, map_location='cpu')
+        model.load_state_dict(checkpoint['model'])
+
     model.to(device)
 
     if args.distributed:  # note that distributed and args.gpu should be set by init_distributed_mode
@@ -264,6 +274,20 @@ def main(lr, batch_size, epochs, args, mixup=0.8, smoothing=0.1):
         criterion = torch.nn.CrossEntropyLoss()
 
     #
+    # load previous states if applicable
+    #
+
+    if checkpoint is not None:
+        if 'optimizer' in checkpoint:
+            optimizer.load_state_dict(checkpoint['optimizer'])
+        if 'lr_scheduler' in checkpoint:
+            lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+        if 'epoch' in checkpoint:
+            args.start_epoch = checkpoint['epoch'] + 1
+        if 'scaler' in checkpoint:
+            loss_scaler.load_state_dict(checkpoint['loss_scaler'])
+
+    #
     # training
     #
 
@@ -286,11 +310,13 @@ if __name__ == "__main__":
         'train_prop': 0.9,
         'wandb_mode': mode,
         'save_checkpoints': True,
-        'checkpoint_name': 'test',
+        'checkpoint_name': None,
         'seed': 0,
         'num_workers': 1,
         'pin_mem': True,
         'device': 'cuda',
+        'resume': None,
+        'start_epoch': 0,
         'opt': 'adamw',  # optimizer params
         'opt_eps': 1e-8,
         'opt_betas': None,
