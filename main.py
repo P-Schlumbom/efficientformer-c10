@@ -64,7 +64,8 @@ def train_epoch(model, criterion, train_loader, optimizer, loss_scaler, clip_gra
         acc = accuracy(outputs, targets)
         mean_loss = running_average(loss_value, mean_loss, i)
         mean_acc = running_average(acc[0], mean_acc, i)
-    return {'loss': mean_loss, 'accuracy': mean_acc}
+    current_lr = optimizer.param_groups[0]['lr']
+    return {'loss': mean_loss, 'accuracy': mean_acc, "lr": current_lr}
 
 
 def evaluate(model, test_loader):

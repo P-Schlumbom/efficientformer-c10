@@ -9,6 +9,7 @@ import numpy as np
 import torch
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
+from torchvision.models.efficientnet import efficientnet_v2_s
 import torch.distributed as dist
 from torch.utils.data import DataLoader, DistributedSampler, SequentialSampler
 from torch.nn.parallel import DistributedDataParallel
@@ -22,10 +23,23 @@ from timm.data import Mixup
 from helpers.utils import running_average, get_world_size, get_rank, init_distributed_mode, setup_distributed, DictToObject, is_main_process
 from dataset_loaders.dataset_loaders import prepare_cifar10, prepare_local_dataset
 
+model_names = [
+    "efficientformerv2_s1",  # efficientformer model
+    "efficientnet_v2_s",  # original efficientnet v2 s
+    "tf_efficientnetv2_s.in21k",  # efficientnet v2 s trained on imagenet21k
+    "efficientvit_m4.r224_in1k",  # efficientvit seems to be even  smaller than efficientformer?
+]
+input_sizes = {
+    "efficientformerv2_s1": 224,
+    "efficientnet_v2_s": 300,
+    "tf_efficientnetv2_s.in21k": 300,
+    "efficientvit_m4.r224_in1k": 224,
+}
 
-def prepare_data(src_path, batch_size, num_classes=None, train_prop=0.8):
+
+def prepare_data(src_path, batch_size, num_classes=None, train_prop=0.8, input_size=224):
     #train_loader, test_loader = prepare_cifar10(batch_size)
-    train_loader, test_loader, train_dataset, test_dataset = prepare_local_dataset(src_path, batch_size, num_classes=num_classes, train_prop=train_prop, drop_last=True)
+    train_loader, test_loader, train_dataset, test_dataset = prepare_local_dataset(src_path, batch_size, num_classes=num_classes, train_prop=train_prop, drop_last=True, input_size=input_size)
 
     return train_loader, test_loader, train_dataset, test_dataset
 
@@ -174,10 +188,12 @@ def main(lr, batch_size, epochs, args, mixup=0.8, smoothing=0.1):
 
     print("preparing data...")
     _, _, train_dataset, test_dataset = prepare_data(
-        '../../../Datasets/Species_Data/2024_species_train_224',
+        '../../../Datasets/inaturalist/20250611_medium_inaturalist_data',
+        #'../../../Datasets/Species_Data/2024_species_train_224',
         #'../../../Datasets/stink-bugs/data_224',
         args.batch_size,
-        train_prop=args.train_prop
+        train_prop=args.train_prop,
+        input_size=input_sizes[args.model_name]
     )
 
     if args.num_classes is None:
@@ -234,8 +250,8 @@ def main(lr, batch_size, epochs, args, mixup=0.8, smoothing=0.1):
     #
 
     print("creating model...")
-    model =create_model(
-        'efficientformerv2_s1',
+    model = create_model(
+        model_name=f'{args.model_name}',
         num_classes=args.num_classes,
         pretrained=True
     )
@@ -300,8 +316,9 @@ def main(lr, batch_size, epochs, args, mixup=0.8, smoothing=0.1):
 if __name__ == "__main__":
     mode='disabled'
     epochs = 1#100
-    batch_size = 384
+    batch_size = 64#384
     lr = 1e-3
+    model_name = 'efficientvit_m4.r224_in1k'  #'efficientformerv2_s1'
     args = {
         'epochs': epochs,  # general params
         'batch_size': batch_size,
@@ -309,6 +326,7 @@ if __name__ == "__main__":
         'smoothing': 0.1,
         'train_prop': 0.9,
         'wandb_mode': mode,
+        'model_name': model_name,
         'save_checkpoints': True,
         'checkpoint_name': None,
         'seed': 0,
@@ -332,7 +350,7 @@ if __name__ == "__main__":
         'warmup_lr': 1e-5,
         'min_lr': 1e-5,
         'decay_epochs': 30,
-        'warmup_epochs': 5,
+        'warmup_epochs': 0,#5,
         'cooldown_epochs': 10,
         'patience_epochs': 10,
         'decay_rate': 0.1,
