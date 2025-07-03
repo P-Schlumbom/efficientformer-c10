@@ -47,7 +47,7 @@ def prepare_data(src_path, batch_size, num_classes=None, train_prop=0.8, input_s
 def train_epoch(model, criterion, train_loader, optimizer, loss_scaler, clip_grad, clip_mode, mixup_fn, device):
     model.train()
     mean_loss, mean_acc = 0, 0
-    for i, data in enumerate(tqdm(train_loader)):
+    for i, data in enumerate(tqdm(train_loader, smoothing=50/len(train_loader))):
         samples, targets = data
         samples = samples.to(device, non_blocking=True)
         targets = targets.to(device, non_blocking=True)
@@ -350,7 +350,7 @@ if __name__ == "__main__":
         'warmup_lr': 1e-5,
         'min_lr': 1e-5,
         'decay_epochs': 30,
-        'warmup_epochs': 0,#5,
+        'warmup_epochs': max(min(epochs-1, 30), 0),#5,  # mustn't be greater than the number of epochs or everything will explode
         'cooldown_epochs': 10,
         'patience_epochs': 10,
         'decay_rate': 0.1,
