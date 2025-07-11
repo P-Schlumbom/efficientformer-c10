@@ -363,7 +363,7 @@ if __name__ == "__main__":
         'rank': None,  # distributed training parameters
         'world_size': None,
         'gpu': None,
-        'dsitributed': None,
+        'distributed': None,
         'dist_backend': None,
         'dist_url': None,
         'dist_eval': True,
